@@ -1,6 +1,9 @@
 const express = require('express')
 const Datastore = require('nedb-promises')
 const bcrypt = require('bcryptjs')
+const jwt = require('jsonwebtoken')
+
+const config = require('./config')
 //initialize express
 const app = express()
 
@@ -38,6 +41,40 @@ app.post('/api/auth/register', async (req, res) => {
          id: newUser._id
       })
 
+
+   } catch (error) {
+      return res.status(500).json({ message: error.message })
+   }
+})
+
+app.post('/app/auth/login', async (req, res) => {
+   try {
+      const { email, password } = req.body
+
+      if ( !email || !password) {
+         return res.status(422).json({ message: 'Please fill in all fields (email and password)'})
+      }
+
+      const user = await user.findOne({ email })
+
+      if (!user) {
+         return res.status(401).json({ message: 'Email or Password is invalid' })
+      }
+
+      const passwordMatch = await bcrypt.compare(password, user.password)
+
+      if (!passwordMatch) {
+         return res.status(401).json({ message: 'Email or Password is invalid' }) 
+      }
+
+      const accessToken = jwt.sign({ userId: user._id }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: '1h' })
+
+      return res.status(200).json({
+         id: user._id,
+         name: user.name,
+         email: user.email,
+         accessToken: accessToken
+      })
 
    } catch (error) {
       return res.status(500).json({ message: error.message })
