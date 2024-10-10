@@ -81,4 +81,40 @@ app.post('/app/auth/login', async (req, res) => {
    }
 })
 
+
+app.get('/app/users/current', ensureAutheniticated, async (req, res) => {
+
+   try {
+      const user = await user.findOne({ _id: req.user.id })
+
+      return res.status(200).json({
+         id: user._id,
+         name: user.name,
+         email: user.email
+      })
+
+   } catch {
+      return res.status(500).json({ message: error.message })
+   }
+
+})
+async function ensureAutheniticated(req, res, next) {
+   const accessToken = req.headers.authourization
+
+   if (!accessToken) {
+      return req.status(401).json({ message: 'Access token not found' })
+
+   }
+
+   try {
+      const decodeAccessToken = jwt.verify(accessToken, config.accessTokenSecret)
+
+      req.user = { id: decodeAccessToken.userId }
+
+      next()
+
+   } catch (error) {
+      return res.status(401).json({ message: 'Access token invalid or expired'})
+   }
+}
 app.listen(3000, () => console.log('Server started on port 3000'))
