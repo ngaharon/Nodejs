@@ -12,6 +12,8 @@ app.use(express.json())
 
 const user = Datastore.create('Users.db')
 
+const userRefreshTokens = Datastore.create('UserRefreshTokens.db')
+
 app.get('/', (req, res) => {
     res.send('REST API Authentication and Authorization')
 })
@@ -68,16 +70,69 @@ app.post('/api/auth/login', async (req, res) => {
          return res.status(401).json({ message: 'Email or Password is invalid' }) 
       }
 
-      const accessToken = jwt.sign({ userId: user._id }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: '1h' })
+      const accessToken = jwt.sign({ userId: user._id }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn })
+
+      const refreshToken = jwt.sign({ userId: user._id }, config.refreshTokenSecret, { subject: 'refreshToken', expiresIn: config.refreshTokenExpiresIn })
+
+      await userRefreshTokens.insert({
+         refreshToken,
+         userId: user._id
+      })
 
       return res.status(200).json({
          id: user._id,
          name: user.name,
          email: user.email,
-         accessToken: accessToken
+         accessToken: accessToken,
+         refreshToken
       })
 
    } catch (error) {
+      return res.status(500).json({ message: error.message })
+   }
+})
+
+app.post('/api/auth/refresh-token', async (req, res) => {
+   try {
+      const { refreshToken } = req.body
+
+      if ( !refreshToken ) {
+         return res.status(401).json({ message: 'Refresh token not found' })
+      }
+
+      const decodedRefreshToken = jwt.verify(refreshToken, config.refreshTokenSecret)
+
+      const userRefreshToken = await userRefreshTokens.findOne({ refreshToken, userId: decodedRefreshToken.userId })
+
+      if ( !userRefreshToken) {
+         return res.status(401).json({ message: 'Refresh token invalid or expired'})
+      }
+
+      await userRefreshTokens.remove({ _id: userRefreshToken._id })
+      await userRefreshTokens.compactDatafile()
+
+
+      const accessToken = jwt.sign({ userId: decodedRefreshToken.userId }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: '1h' })
+
+      const newRefreshToken = jwt.sign({ userId: decodedRefreshToken.userId }, config.refreshTokenSecret, { subject: 'refreshToken', expiresIn: '1w' })
+
+      await userRefreshTokens.insert({
+         refreshToken: newRefreshToken,
+         userId: decodedRefreshToken.userId
+      })
+
+      return res.status(200).json({
+         accessToken,
+         refreshToken: newRefreshToken
+      })
+
+
+
+   } catch (error) {
+      if  (error instanceof jwt.TokenExpiredError || error instanceof jwt.JsonWebTokenError) {
+         return res.status(401).json({ message: 'Refresh token invalid or expired'})
+      }
+
       return res.status(500).json({ message: error.message })
    }
 })
@@ -123,11 +178,20 @@ async function ensureAutheniticated(req, res, next) {
       next()
 
    } catch (error) {
-      return res.status(401).json({ message: 'Access token invalid or expired'})
+
+      if (error instanceof jwt.TokenExpiredError) {
+         return res.status(401).json({ message: 'Access token expired', code: 'AccessTokenExpired' })
+      } else if (error instanceof jwt.JsonWebTokenError) {
+         return res.status(401).json({ message: 'Access token invalid', code: 'AccessTokenInvalid' })
+      } else {
+         return res.status(500).json({ message: error.message })
+      }
+      
    }
+   return res.status(401).json({ message: 'Access token invalid or expired'})
 }
 
-function authorize([ roles = []]) {
+function authorize(roles = []) {
    return async function (req, res, next) {
       const user = await user.findOne({ _id: req.user.id })
 
