@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
    try {
-      const { name, email, password } = req.body
+      const { name, email, password, role } = req.body
 
       if ( !name || !email || !password ) {
          return res.status(422).json({ message: 'Please fill in all fields (name, email and password)'})
@@ -33,7 +33,8 @@ app.post('/api/auth/register', async (req, res) => {
       const newUser = await user.insert({
          name,
          email,
-         password: hashedPassword
+         password: hashedPassword,
+         role: role ?? 'member'
       })
 
       return res.status(201).json({ 
@@ -47,7 +48,7 @@ app.post('/api/auth/register', async (req, res) => {
    }
 })
 
-app.post('/app/auth/login', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
    try {
       const { email, password } = req.body
 
@@ -82,7 +83,7 @@ app.post('/app/auth/login', async (req, res) => {
 })
 
 
-app.get('/app/users/current', ensureAutheniticated, async (req, res) => {
+app.get('/api/users/current', ensureAutheniticated, async (req, res) => {
 
    try {
       const user = await user.findOne({ _id: req.user.id })
@@ -97,6 +98,14 @@ app.get('/app/users/current', ensureAutheniticated, async (req, res) => {
       return res.status(500).json({ message: error.message })
    }
 
+})
+
+app.get('/api/admin', ensureAutheniticated, authorize(['admin']), (req, res) => {
+   return res.status(200).json({ message: 'Only admins can access this route'})
+})
+
+app.get('/api/moderator', ensureAutheniticated, authorize(['admin', 'moderator']), (req, res) => {
+   return res.status(200).json({ message: 'Only admins and moderators can access this route!'})
 })
 async function ensureAutheniticated(req, res, next) {
    const accessToken = req.headers.authourization
@@ -115,6 +124,18 @@ async function ensureAutheniticated(req, res, next) {
 
    } catch (error) {
       return res.status(401).json({ message: 'Access token invalid or expired'})
+   }
+}
+
+function authorize([ roles = []]) {
+   return async function (req, res, next) {
+      const user = await user.findOne({ _id: req.user.id })
+
+      if (!user || !roles.includes(user.role)) {
+         return req.status(403).json({ message: 'Access denied' })
+      }
+
+      next()
    }
 }
 app.listen(3000, () => console.log('Server started on port 3000'))
