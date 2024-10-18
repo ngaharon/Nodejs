@@ -160,6 +160,32 @@ app.get('/api/auth/2fa/generate', ensureAutheniticated, async (req, res) => {
    }
 })
 
+app.post('.api/auth/2fa/validate', ensureAutheniticated, async (req, res) => {
+   try {
+      const { totp } = req.body
+
+      if ( !totp ) {
+         return res.status(422).json({ message: 'TOTP is required' })
+      }
+
+      const user = await users.findOne({ _id: req.user.id })
+
+      const verified = authenticator.check(totp, user['2fasecret'])
+
+      if (!verified) {
+        return res.status(400).json({ message: 'TOTP is not correct or expired' }) 
+      }
+
+      await users.update({ _id: req.user.id }, { $set: {'2faEnable': true} })
+      await users.compactDatafile()
+
+      return res.status(200).json({ message: 'TOTP validate successfully' })
+
+   } catch {
+      return res.status(500).json({ message: error.message })
+   }
+})
+
 app.get('/api/auth/logout', ensureAutheniticated, async (req, res) => {
    try {
       await userRefreshTokens.removeMany({ userId: req.user.id })
