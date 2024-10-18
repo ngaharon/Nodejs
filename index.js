@@ -2,6 +2,8 @@ const express = require('express')
 const Datastore = require('nedb-promises')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
+const { authenticator } = require('otplib')
+const qrcode = require('qrcode')
 
 const config = require('./config')
 //initialize express
@@ -26,7 +28,7 @@ app.post('/api/auth/register', async (req, res) => {
          return res.status(422).json({ message: 'Please fill in all fields (name, email and password)'})
       }
 
-      if (await user.findOne({ email })) {
+      if (await users.findOne({ email })) {
          return res.status(409).json({ message: 'Email already exits'})
       }
 
@@ -36,7 +38,10 @@ app.post('/api/auth/register', async (req, res) => {
          name,
          email,
          password: hashedPassword,
-         role: role ?? 'member'
+         role: role ?? 'member',
+         '2faEnable': false,
+         '2faSecret': null
+
       })
 
       return res.status(201).json({ 
@@ -58,7 +63,7 @@ app.post('/api/auth/login', async (req, res) => {
          return res.status(422).json({ message: 'Please fill in all fields (email and password)'})
       }
 
-      const user = await user.findOne({ email })
+      const user = await users.findOne({ email })
 
       if (!user) {
          return res.status(401).json({ message: 'Email or Password is invalid' })
@@ -135,7 +140,25 @@ app.post('/api/auth/refresh-token', async (req, res) => {
    }
 })
 
+app.get('/api/auth/2fa/generate', ensureAutheniticated, async (req, res) => {
+   try {
+      const user = await users.findOne({ _id: req.user.id })
 
+      const secret = authenticator.generateSecret()
+      const uri = authenticator.keyuri(user.email, 'manfra.io', secret)
+
+      await users.update({ _id: req.user.id }, { $set: { '2faSecret': secret } })
+      await users.compactDatafile()
+
+      const qrCode = await qrcode.toBuffer(uri, { type: 'image/png', margin: 1 })
+
+      req.setHeader('Content-Disposition', 'attachment: filename=qrcode.png')
+      return res.status(200).type('image/png').send(qrCode)
+
+   } catch (error) {
+      return res.status(500).json({ message: error.message })
+   }
+})
 
 app.get('/api/auth/logout', ensureAutheniticated, async (req, res) => {
    try {
@@ -159,7 +182,7 @@ app.get('/api/auth/logout', ensureAutheniticated, async (req, res) => {
 app.get('/api/users/current', ensureAutheniticated, async (req, res) => {
 
    try {
-      const user = await user.findOne({ _id: req.user.id })
+      const user = await users.findOne({ _id: req.user.id })
 
       return res.status(200).json({
          id: user._id,
@@ -217,7 +240,7 @@ async function ensureAutheniticated(req, res, next) {
 
 function authorize(roles = []) {
    return async function (req, res, next) {
-      const user = await user.findOne({ _id: req.user.id })
+      const user = await users.findOne({ _id: req.user.id })
 
       if (!user || !roles.includes(user.role)) {
          return req.status(403).json({ message: 'Access denied' })
