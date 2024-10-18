@@ -4,6 +4,8 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const { authenticator } = require('otplib')
 const qrcode = require('qrcode')
+const crypto = require('crypto')
+const NodeCache = require('node-cache')
 
 const config = require('./config')
 //initialize express
@@ -11,6 +13,8 @@ const app = express()
 
 // configure body parser
 app.use(express.json())
+
+const cache = new NodeCache()
 
 const user = Datastore.create('Users.db')
 const userRefreshTokens = Datastore.create('UserRefreshTokens.db')
@@ -75,7 +79,14 @@ app.post('/api/auth/login', async (req, res) => {
          return res.status(401).json({ message: 'Email or Password is invalid' }) 
       }
 
-      const accessToken = jwt.sign({ userId: user._id }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn })
+      if (user['2faEnable']) {
+         const tempToken = crypto.randomUUID()
+
+         cache.set(config.cacheTemporaryTokenPrefix + tempToken, user._id, consfig.cacheTemporaryTokenExpiresInSeconds)
+
+         return res.status(200).json({ tempToken, expiresInSeconds: config.cacheTemporaryTokenExpiresInSeconds})
+      } else {
+        const accessToken = jwt.sign({ userId: user._id }, config.accessTokenSecret, { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn })
 
       const refreshToken = jwt.sign({ userId: user._id }, config.refreshTokenSecret, { subject: 'refreshToken', expiresIn: config.refreshTokenExpiresIn })
 
@@ -90,7 +101,8 @@ app.post('/api/auth/login', async (req, res) => {
          email: user.email,
          accessToken: accessToken,
          refreshToken
-      })
+      }) 
+      }
 
    } catch (error) {
       return res.status(500).json({ message: error.message })
